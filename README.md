@@ -1,4 +1,4 @@
-# Navigation Interception API
+# IdP-Initiated Request API
 
 ## Problem Statement
 
