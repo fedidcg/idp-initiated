@@ -1,171 +1,161 @@
-# Example Federated Identity CG explainer and spec source files
+# Navigation Interception API
 
-This repository contains explainer and spec templates that can be used
-by folks working on proposals and work items in the Federated Identity CG.
+## Problem Statement
 
-This file is the sample explainer, which begins after this section. The
-sample explainer text itself comes from the
-[TAG](https://w3ctag.github.io/)'s excellent
-[explainer explainer](https://w3ctag.github.io/explainers).
+There are a series of benefits that we expect to deliver to users when RPs and IdPs use FedCM rather than low level primitives (such as third party cookies and link decoration), such as mitigating tracking and automating flows (e.g. in agentic browsers).
 
-There is also **[sample work item spec source](work-item.bs)** (in
-Bikeshed), and a [Makefile](Makefile) that can be used for testing
-explainer and spec changes locally. Don't forget to rename
-`work-item.bs` to `shortname.bs`!
+However, so far we've only managed to deploy FedCM on a constrained deployment setup (IdPs that deploy with JS SDKs, small federations and cases where RPs can be deployed at scale). 
 
-<!-- When creating a new explainer, delete everything above the following line -->
-# [Title]
+One deployment pattern (which also happens to be the most widely used, and one of the reasons why it is hard to classify bounce tracking) remained out of reach to deploy at scale: federation implemented with top level redirects.
 
-[Keep one of these sentences:]
+For example, take [chatgpt.com](http://chatgpt.com/): a user clicks on `Continue with Google`, which redirects the user to [google.com](http://accounts.google.com/) (with a well-defined set of URL parameters, including, notably, a `redirect_uri` that tells where to redirect the user at the end of the flow) which asks for the user’s permission to share their identity to [chatgpt.com](http://chatgpt.com/) and then redirects (using the `redirect_uri` specified before) the user back to [chatgpt.com](http://chatgpt.com/) with the user’s identity in it (e.g. with a well-defined URL parameter called `code`).
 
-A [Proposal](https://fedidcg.github.io/charter#proposals)
-of the [Federated Identity Community Group](https://fedidcg.github.io/).
+We could go RP by RP and ask them to reploy and use FedCM instead (for IdPs that support it), but that would be an overwhelming task considering how many Relying Parties exist to any single IdP.
 
-A [Work Item](https://fedidcg.github.io/charter#work-items)
-of the [Federated Identity Community Group](https://fedidcg.github.io/).
+![Image](https://github.com/user-attachments/assets/815503d7-5c21-4a69-b61f-7802be90428c)
 
-## Authors:
+As a basis for comparison, consider the case when RPs embed JS SDKs that IdPs can re-deploy: migrating the traffic becomes much easier, because just changing the JS SDK that the IdP controls, the IdP can deploy FedCM to many RPs. 
 
-- [Author 1]
-- [Author 2]
-- [etc.]
+For example, here is part of the federation traffic migrated to FedCM which isn’t using redirect flows, but rather rely on updating JS SDKs that an Identity Provider controls live on a Relying Party, in this case https://pinterest.com.
 
-## Participate
-- https://github.com/fedidcg/deliverable/issues
+![Image](https://github.com/user-attachments/assets/244ab21a-7064-48f7-9e1b-aa58a36c6279)
 
-## Table of Contents [if the explainer is longer than one printed page]
+In redirect flows, however, RPs directly navigate the user to the Identity Provider’s OAuth authorization endpoint without any opportunity for the IdP to tell the browser that this is a FedCM flow through JS calls.
 
-[You can generate a Table of Contents for markdown documents using a tool like [doctoc](https://github.com/thlorenz/doctoc).]
+Redirect flows account for the vast majority of the deployment of federation at large, so really important to be able to be migrated at scale.
 
-<!-- START doctoc generated TOC please keep comment here to allow auto update -->
-<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+One trivial answer to this problem is to ask every website in the world to change and call FedCM instead (when the corresponding IdP supports it), but that’s intractable based on the scale of the number of Relying Parties.
 
+So, the problem is: how might an IdP migrate redirect flows without requiring changes to its Relying Parties?
 
-- [Introduction](#introduction)
-- [Goals [or Motivating Use Cases, or Scenarios]](#goals-or-motivating-use-cases-or-scenarios)
-- [Non-goals](#non-goals)
-- [[API 1]](#api-1)
-- [[API 2]](#api-2)
-- [Key scenarios](#key-scenarios)
-  - [Scenario 1](#scenario-1)
-  - [Scenario 2](#scenario-2)
-- [Detailed design discussion](#detailed-design-discussion)
-  - [[Tricky design choice #1]](#tricky-design-choice-1)
-  - [[Tricky design choice 2]](#tricky-design-choice-2)
-- [Considered alternatives](#considered-alternatives)
-  - [[Alternative 1]](#alternative-1)
-  - [[Alternative 2]](#alternative-2)
-- [Stakeholder Feedback / Opposition](#stakeholder-feedback--opposition)
-- [References & acknowledgements](#references--acknowledgements)
+## The Proposal
 
-<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+The proposal under exploration in this doc here is to find ways to initiate FedCM without requiring changing Relying Parties (or relying on JS SDKs running on the RP’s page).
 
-## Introduction
+The key insight in this proposal is to try to find a way to allow the IdP to communicate to the browser that this is a FedCM flow before the user navigates away from the Relying Party.
 
-[The "executive summary" or "abstract".
-Explain in a few sentences what the goals of the project are,
-and a brief overview of how the solution works.
-This should be no more than 1-2 paragraphs.]
+While looking at many different mechanisms (e.g. OPTIONS requests, CSP policies, DNS entries, etc), we ran into a common pattern in browsers: before the browser navigates the user away from the current page, the browser fetches the headers of the next page, and is allowed to cancel the current navigation based on that information.
 
-## Goals [or Motivating Use Cases, or Scenarios]
+This pattern is currently used for a variety of things, but perhaps most notably to handle downloads: if a user clicks on a binary file (say, a .zip file), the browser doesn’t navigate away from the page, and instead it downloads the file without leaving the page. The browser makes that distinction by looking at the returning HTTP headers to figure out that the next page isn’t an actual page, but rather a binary blob that needs to be downloaded instead. This works on a variety of navigational events, whether they are `<a>` tags, `window.location.href` scripts, `<form method=”POST”>` submissions, etc.
 
-[What is the **end-user need** which this project aims to address?]
+So, the idea is to use that mechanism (in conjunction with participating Identity Providers) to intercept navigations when users click on the “Continue with IdP” buttons.
 
-## Non-goals
+There are multiple stages of the navigation that the throttle can interact with (e.g. before making HTTP requests, while redirects are being done, etc), but the most meaningful one to this design here is that there is a stage where (a) the navigation can still be cancelled and (b) the HTTP headers of the website that the user is going to navigate to has already been fetched and parsed.
 
-[If there are "adjacent" goals which may appear to be in scope but aren't,
-enumerate them here. This section may be fleshed out as your design progresses and you encounter necessary technical and other trade-offs.]
+That is, after the user clicks on “Continue with IdP”, the HTTP headers of the next URL (e.g. The IdP’s OAuth authorization endpoint) is fetched and made available for a navigation throttler to make a determination to cancel the navigation or not.
 
-## [API 1]
+The proposal is to ask the HTTP endpoint to output a special HTTP header that tells the browser “this flow is equivalent to this FedCM request in XYZ ways”.
 
-[For each related element of the proposed solution - be it an additional JS method, a new object, a new element, a new concept etc., create a section which briefly describes it.]
+For example:
 
-```js
-// Provide example code - not IDL - demonstrating the design of the feature.
-
-// If this API can be used on its own to address a user need,
-// link it back to one of the scenarios in the goals section.
-
-// If you need to show how to get the feature set up
-// (initialized, or using permissions, etc.), include that too.
+```http
+HTTP/1.1 200 OK
+Date: Thu, 16 Oct 2025 20:28:00 GMT
+Content-Type: text/html; charset=UTF-8
+Content-Length: 123
+Connection: Keep-Alive
+FedCM-Intercept-Navigation: client_id="1234", config_url="https://idp.example/fedcm.json", context="continue", domain_hint="domain.com", fields=("name" "email"), login_hint="user@email.com", nonce="5678", params="{\"custom_key\":\"custom_value\"}"
 ```
 
-[Where necessary, provide links to longer explanations of the relevant pre-existing concepts and API.
-If there is no suitable external documentation, you might like to provide supplementary information as an appendix in this document, and provide an internal link where appropriate.]
+The proposed `FedCM-Intercept-Navigation` header is an [RFC 9651](https://datatracker.ietf.org/doc/html/rfc9651#name-dictionaries)  encoding of a subset (e.g. IdPs don’t get to specify “mode” or a list of “providers” – but can specify “context” and a single entry of an IdentityProviderRequestOptions) of a FedCM request in query parameters.
 
-[If this is already specced, link to the relevant section of the spec.]
+The supported parameters are:
 
-[If spec work is in progress, link to the PR or draft of the spec.]
+| Parameter | Type |
+| :------- | :------ |
+| configURL | String |
+| clientId | String |
+| nonce | String |
+| params | String-encoded JSON |
+| context | String of one of the pre-defined contexts |
+| login_hint | String |
+| domain_hint | String |
+| fields | List of Strings of supported fields |
 
-## [API 2]
+Notably, the IdP is **NOT** allowed to set the following parameters of the FedCM API: `mode` (assumed to always be active) and use multiple `providers`.
 
-[etc.]
+When it does that, the navigation throttler is able to get that response BEFORE the user navigates away, and is then able to cancel (or defer) the navigation and open a browser-mediated FedCM prompt instead:
 
-## Key scenarios
+<img width="1280" height="960" alt="FedCM Navigation Interception API" src="https://github.com/user-attachments/assets/47692368-3809-4fd1-a6e1-9dbb46d0920f" />
 
-[If there are a suite of interacting APIs, show how they work together to solve the key scenarios described.]
+Because the browser has gotten really good at mediating federation (e.g. we know how to handle logged out users, adding new accounts, asking for permissions, etc), the entire flow that would have been a navigation can be captured by the browser.
 
-### Scenario 1
+Because the header is new, the IdP would operate without any change in browsers that don’t intercept it.
 
-[Description of the end-user scenario]
+At the end of the flow, as per the FedCM protocol, the `id_assertion_endpoint` is called, and we introduce a new result type, say, `redirect_to`, to go along with `token` (which resolves a JS promise) and `continue_on` (which opens a pop-up window).
 
-```js
-// Sample code demonstrating how to use these APIs to address that scenario.
+The id assertion response now gets augmented with an extra response type:
+
+```javascript
+// https://w3c-fedid.github.io/FedCM/#dictdef-identityassertionresponse
+dictionary IdentityAssertionResponse {
+  // ...
+  (USVString or IdentityAssertionResponseFormSubmission) redirect_to;
+  // ...
+};
+
+enum Method {"GET", "POST"};
+
+dictionary IdentityAssertionResponseFormSubmission {
+  USVString url;
+  Method method;
+  USVString? body;
+};
 ```
 
-### Scenario 2
+For example:
 
-[etc.]
-
-## Detailed design discussion
-
-### [Tricky design choice #1]
-
-[Talk through the tradeoffs in coming to the specific design point you want to make.]
-
-```js
-// Illustrated with example code.
+```javascript
+{
+  'redirect_to': 'https://chatgpt.com/oauth/redirect_uri?code=...',
+}
 ```
 
-[This may be an open question,
-in which case you should link to any active discussion threads.]
+When the `redirect_to` response is a string, it is assumed that this is a GET navigation.
 
-### [Tricky design choice 2]
+For POST form submissions, the “redirect_to” can be expanded into an object of its own, so that the other parameters can be specified as a form submission. For example:
 
-[etc.]
+```javascript
+{
+  'redirect_to': {
+    'url': 'https://chatgpt.com/oauth/redirect_uri',
+    'method': 'POST',
+    'body': 'code=hello'
+  }
+}
+```
 
-## Considered alternatives
+What `redirect_to` instructs the browser to do is to continue the navigation to a new URL that the IdP specified, concluding the OAuth/OIDC flow and logging the user to the RP.
 
-[This should include as many alternatives as you can,
-from high level architectural decisions down to alternative naming choices.]
+## User ergonomics
 
-### [Alternative 1]
+A big part of the reason this is a compelling construction is because there are intrinsic benefits of having the user agent access high level concepts (e.g. a sign-in flow) rather than low level concepts (e.g. a top level navigation).
 
-[Describe an alternative which was considered,
-and why you decided against it.]
+For example, UX-wise, the browser native UIs perform much better than top-level redirects and pop-up windows, especially on mobile devices with constrained memory and network resources.
 
-### [Alternative 2]
+Additionally, when the user agent has access to the high level concept of federated accounts, it can reconcile and unify with other authentication mechanisms (e.g. passwords and passkeys) for returning users.
 
-[etc.]
 
-## Stakeholder Feedback / Opposition
+## Developer ergonomics
 
-[Implementors and other stakeholders may already have publicly stated positions on this work. If you can, list them here with links to evidence as appropriate.]
+One nice property of this feature is that it allows redirect flows to have an “inline experience” without requiring the Relying Parties to use Javascript and pop-up windows to do so. Because it only requires Identity Providers to change, most Relying Parties can get this improved user experience without redeploying at all.
 
-- [Implementor A] : Positive
-- [Stakeholder B] : No signals
-- [Implementor C] : Negative
+## Security Considerations
 
-[If appropriate, explain the reasons given by other implementors for their concerns.]
+- What kinds of security considerations do we need to put into the “redirect_to” URL?
+- We shouldn’t allow redirecting to things like reserved urls, like chrome://settings, but what else?
+- Any CSP considerations? What else?
+- A1 > IdP > A2
+- A2 should be navigated with the initiator being IdP
+- E.g. CSP policies, redirect chains, SameSite cookies policies (e.g. not pass SameSite=None), etc
+- Initiator in this case doesn’t have a frame
 
-## References & acknowledgements
+## Privacy Considerations
 
-[Your design will change and be informed by many people; acknowledge them in an ongoing way! It helps build community and, as we only get by through the contributions of many, is only fair.]
+### Link Decoration
 
-[Unless you have a specific reason not to, these should be in alphabetical order.]
+One nice side effect of this proposal is that it turns the OAuth servers future-proof to link decoration mitigations.
 
-Many thanks for valuable feedback and advice from:
+So far, one of the mitigations to link decoration was to block first party cookies when links are decorated. 
 
-- [Person 1]
-- [Person 2]
-- [etc.]
+This construction would allow OAuth servers to operate in that environment, because they could return the header without first party cookies, and the browser can still construct the account choosing UI because we already figured out how to do so without third party cookies (i.e. via the accounts endpoint construction).
