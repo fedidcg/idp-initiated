@@ -2,9 +2,11 @@
 
 ## Problem Statement
 
-There are a series of benefits that we expect to deliver to users when RPs and IdPs use FedCM rather than low level primitives (such as third party cookies and link decoration), such as mitigating tracking and automating flows (e.g. in agentic browsers).
+Today, as a broad approximation, users of the web are logging in to websites in one of two ways: passwords and/or federation.
 
-However, so far we've only managed to deploy FedCM on a constrained deployment setup (IdPs that deploy with JS SDKs, small federations and cases where RPs can be deployed at scale). 
+In browsers that support FedCM, users of conforming IdPs and RPs are able to use federation without incurring into the various challenges faced when federation uses low level primitives (such as tracking via third party cookies and link decoration, as well as a lack of high-level semantic information for agentic browsers).
+
+So far we have managed to deploy FedCM in a meaningful but constrained production setup (e.g. IdPs that deploy with JS SDKs, small federations and cases where RPs can be deployed at scale, e.g. when a single vendor - such as shopify.com - can redeploy many websites). 
 
 One deployment pattern (which also happens to be the most widely used, and one of the reasons why it is hard to classify bounce tracking) remained out of reach to deploy at scale: federation implemented with top level redirects.
 
