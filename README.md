@@ -1,5 +1,7 @@
 # IdP-Initiated Request API
 
+TL;DR; This is a proposal to introduce an HTTP header that allows an Identity Provider to initiate a FedCM request on a Relying Party before the browser commits to a navigation. This allows IdPs to deploy FedCM without requiring any RPs to redeploy. In addition to the Privacy and UX benefits FedCM provides, we expect this proposal to contribute meaningfully to agentic browsers.
+
 ## Problem Statement
 
 Today, as a broad approximation, users of the web are logging in to websites in one of two ways: passwords and/or federation.
