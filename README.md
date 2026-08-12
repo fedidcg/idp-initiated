@@ -67,8 +67,8 @@ The supported parameters are:
 
 | Parameter | Type |
 | :------- | :------ |
-| configURL | String |
-| clientId | String |
+| config_url | String |
+| client_id | String |
 | nonce | String |
 | params | String-encoded JSON |
 | context | String of one of the pre-defined contexts |
